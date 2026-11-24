@@ -41,23 +41,24 @@
       padding: 8px 10px;
       border-radius: 8px;
       font-size: 14px;
-      width: 140px;
+      width: 135px;
     }
     button {
       background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
-      padding: 8px 12px;
+      padding: 8px 10px;
       border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       white-space: nowrap;
     }
     button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.4; pointer-events: none; }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     button.danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
 
@@ -101,7 +102,9 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       overflow-x: auto;
+      scrollbar-width: none;
     }
+    .toolbar::-webkit-scrollbar { display: none; }
 
     .editor-wrap {
       flex: 1;
@@ -130,7 +133,9 @@
       border-top: 1px solid var(--border);
       padding: 6px;
       gap: 6px;
+      scrollbar-width: none;
     }
+    .mobile-keys::-webkit-scrollbar { display: none; }
     .mobile-keys button {
       padding: 8px 12px;
       font-family: monospace;
@@ -171,6 +176,8 @@
 <div class="file-bar" id="fileBar"></div>
 
 <div class="toolbar">
+  <button id="undoBtn" onclick="undoCode()">↩️ Undo</button>
+  <button id="redoBtn" onclick="redoCode()">↪️ Redo</button>
   <button onclick="copyCode()">📋 Copy</button>
   <button onclick="pasteCode()">📥 Paste</button>
   <button onclick="clearCode()">🧹 Clear</button>
@@ -201,7 +208,7 @@
 <div id="toast">Done!</div>
 
 <script>
-  const STORAGE_KEY = 'orion_ext_studio_v1';
+  const STORAGE_KEY = 'orion_ext_studio_v2';
 
   const defaultFiles = [
     {
@@ -242,10 +249,33 @@
     files: defaultFiles
   };
 
+  // Per-file Undo/Redo stacks in memory
+  const historyMap = {};
+  let typingTimer = null;
+
+  function ensureHistory(file) {
+    if (!historyMap[file.id]) {
+      historyMap[file.id] = { undo: [file.content], redo: [] };
+    }
+    return historyMap[file.id];
+  }
+
+  function pushSnapshot(file, newValue) {
+    const h = ensureHistory(file);
+    if (h.undo[h.undo.length - 1] !== newValue) {
+      h.undo.push(newValue);
+      if (h.undo.length > 60) h.undo.shift();
+      h.redo = [];
+    }
+    updateHistoryButtons();
+  }
+
   const fileBar = document.getElementById('fileBar');
   const editor = document.getElementById('codeEditor');
   const zipInput = document.getElementById('zipName');
   const exportBtn = document.getElementById('exportBtn');
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
 
   zipInput.value = state.zipName;
   zipInput.addEventListener('input', () => {
@@ -255,10 +285,14 @@
 
   editor.addEventListener('input', () => {
     const file = getActiveFile();
-    if (file) {
-      file.content = editor.value;
-      saveState();
-    }
+    if (!file) return;
+    file.content = editor.value;
+    saveState();
+
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => {
+      pushSnapshot(file, editor.value);
+    }, 350);
   });
 
   function saveState() {
@@ -266,14 +300,14 @@
   }
 
   function getActiveFile() {
-    return state.files.find(f => f.id === state.activeId) || state.files;
+    return state.files.find(f => f.id === state.activeId) || state.files[0];
   }
 
   function showToast(msg) {
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.style.opacity = '1';
-    setTimeout(() => t.style.opacity = '0', 2000);
+    setTimeout(() => t.style.opacity = '0', 1800);
   }
 
   function updateExportCount() {
@@ -281,10 +315,50 @@
     exportBtn.textContent = `Export ZIP (${count})`;
   }
 
+  function updateHistoryButtons() {
+    const file = getActiveFile();
+    if (!file) return;
+    const h = ensureHistory(file);
+    undoBtn.disabled = h.undo.length <= 1;
+    redoBtn.disabled = h.redo.length === 0;
+  }
+
+  function undoCode() {
+    const file = getActiveFile();
+    if (!file) return;
+    const h = ensureHistory(file);
+    if (h.undo.length > 1) {
+      const current = h.undo.pop();
+      h.redo.push(current);
+      const prev = h.undo[h.undo.length - 1];
+      file.content = prev;
+      editor.value = prev;
+      saveState();
+      updateHistoryButtons();
+    }
+  }
+
+  function redoCode() {
+    const file = getActiveFile();
+    if (!file) return;
+    const h = ensureHistory(file);
+    if (h.redo.length > 0) {
+      const next = h.redo.pop();
+      h.undo.push(next);
+      file.content = next;
+      editor.value = next;
+      saveState();
+      updateHistoryButtons();
+    }
+  }
+
   function render() {
     fileBar.innerHTML = '';
     const active = getActiveFile();
-    if (active) state.activeId = active.id;
+    if (active) {
+      state.activeId = active.id;
+      ensureHistory(active);
+    }
 
     state.files.forEach(file => {
       const tab = document.createElement('div');
@@ -314,6 +388,7 @@
 
     editor.value = active ? active.content : '';
     updateExportCount();
+    updateHistoryButtons();
   }
 
   function addNewFile() {
@@ -350,7 +425,7 @@
     const file = getActiveFile();
     if (confirm(`Delete ${file.name}?`)) {
       state.files = state.files.filter(f => f.id !== file.id);
-      state.activeId = state.files.id;
+      state.activeId = state.files[0].id;
       saveState();
       render();
     }
@@ -378,28 +453,34 @@
   }
 
   function clearCode() {
-    if (confirm('Clear all code in this file?')) {
-      editor.value = '';
-      const file = getActiveFile();
-      if (file) file.content = '';
-      saveState();
-    }
+    const file = getActiveFile();
+    if (!file) return;
+    pushSnapshot(file, editor.value);
+    editor.value = '';
+    file.content = '';
+    pushSnapshot(file, '');
+    saveState();
+    showToast('Cleared (tap Undo to restore)');
   }
 
   function insertChar(str) {
+    const file = getActiveFile();
+    if (file) pushSnapshot(file, editor.value);
+
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
     editor.value = editor.value.substring(0, start) + str + editor.value.substring(end);
     editor.selectionStart = editor.selectionEnd = start + str.length;
     editor.focus();
-    const file = getActiveFile();
+
     if (file) {
       file.content = editor.value;
+      pushSnapshot(file, editor.value);
       saveState();
     }
   }
 
-  // Built-in zero-dependency ZIP archive builder (CRC32 + Store/Deflate)
+  // Built-in zero-dependency ZIP archive builder
   const crcTable = (() => {
     const table = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
@@ -429,42 +510,40 @@
       const dataBytes = encoder.encode(file.content);
       const checksum = crc32(dataBytes);
 
-      // Local File Header (30 bytes + filename)
       const localHeader = new Uint8Array(30 + nameBytes.length);
       const lv = new DataView(localHeader.buffer);
-      lv.setUint32(0, 0x04034b50, true); // Local file header signature
-      lv.setUint16(4, 20, true);         // Version needed
-      lv.setUint16(6, 0x0800, true);     // UTF-8 flag
-      lv.setUint16(8, 0, true);          // Compression method: 0 (store)
-      lv.setUint16(10, 0, true);         // Mod time
-      lv.setUint16(12, 0x0021, true);    // Mod date
-      lv.setUint32(14, checksum, true);  // CRC-32
-      lv.setUint32(18, dataBytes.length, true); // Compressed size
-      lv.setUint32(22, dataBytes.length, true); // Uncompressed size
-      lv.setUint16(26, nameBytes.length, true); // File name length
-      lv.setUint16(28, 0, true);         // Extra field length
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0x0800, true);
+      lv.setUint16(8, 0, true);
+      lv.setUint16(10, 0, true);
+      lv.setUint16(12, 0x0021, true);
+      lv.setUint32(14, checksum, true);
+      lv.setUint32(18, dataBytes.length, true);
+      lv.setUint32(22, dataBytes.length, true);
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);
       localHeader.set(nameBytes, 30);
 
-      // Central Directory Header (46 bytes + filename)
       const centralHeader = new Uint8Array(46 + nameBytes.length);
       const cv = new DataView(centralHeader.buffer);
-      cv.setUint32(0, 0x02014b50, true); // Central dir signature
-      cv.setUint16(4, 20, true);         // Version made by
-      cv.setUint16(6, 20, true);         // Version needed
-      cv.setUint16(8, 0x0800, true);     // UTF-8 flag
-      cv.setUint16(10, 0, true);         // Compression method: 0
-      cv.setUint16(12, 0, true);         // Mod time
-      cv.setUint16(14, 0x0021, true);    // Mod date
-      cv.setUint32(16, checksum, true);  // CRC-32
-      cv.setUint32(20, dataBytes.length, true); // Compressed size
-      cv.setUint32(24, dataBytes.length, true); // Uncompressed size
-      cv.setUint16(28, nameBytes.length, true); // File name length
-      cv.setUint16(30, 0, true);         // Extra length
-      cv.setUint16(32, 0, true);         // Comment length
-      cv.setUint16(34, 0, true);         // Disk number
-      cv.setUint16(36, 0, true);         // Internal attrs
-      cv.setUint32(38, 0, true);         // External attrs
-      cv.setUint32(42, offset, true);    // Relative offset
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true);
+      cv.setUint16(14, 0x0021, true);
+      cv.setUint32(16, checksum, true);
+      cv.setUint32(20, dataBytes.length, true);
+      cv.setUint32(24, dataBytes.length, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint16(30, 0, true);
+      cv.setUint16(32, 0, true);
+      cv.setUint16(34, 0, true);
+      cv.setUint16(36, 0, true);
+      cv.setUint32(38, 0, true);
+      cv.setUint32(42, offset, true);
       centralHeader.set(nameBytes, 46);
 
       localParts.push(localHeader, dataBytes);
@@ -475,7 +554,7 @@
     const centralSize = centralParts.reduce((acc, p) => acc + p.length, 0);
     const endRecord = new Uint8Array(22);
     const ev = new DataView(endRecord.buffer);
-    ev.setUint32(0, 0x06054b50, true); // End of central dir signature
+    ev.setUint32(0, 0x06054b50, true);
     ev.setUint16(4, 0, true);
     ev.setUint16(6, 0, true);
     ev.setUint16(8, files.length, true);
@@ -487,7 +566,7 @@
     return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' });
   }
 
-  async function exportZip() {
+  function exportZip() {
     const selectedFiles = state.files.filter(f => f.selected);
     if (selectedFiles.length === 0) {
       alert('Check at least one file checkbox to include in the ZIP.');
@@ -498,8 +577,6 @@
 
     try {
       const blob = buildZipBlob(selectedFiles);
-
-      // 1. Standard direct download (triggers Orion's download bar)
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -511,11 +588,11 @@
       setTimeout(() => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-      }, 1500);
+      }, 2000);
 
-      showToast(`Downloaded ${filename}`);
+      showToast(`Exported ${filename}`);
     } catch (err) {
-      alert('Export failed: ' + err.message);
+      alert('Export error: ' + err.message);
     }
   }
 
