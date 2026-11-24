@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Orion Extension Studio</title>
+  <script src="https://cloudflare.com"></script>
+  <style>
+    :root {
+      --bg: #121214;
+      --surface: #1e1e24;
+      --border: #2e2e38;
+      --text: #f4f4f6;
+      --accent: #6366f1;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      overflow: hidden;
+    }
+    header {
+      background: var(--surface);
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 14px;
+      width: 150px;
+    }
+    button {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    button:active { transform: scale(0.97); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
+
+    .file-bar {
+      display: flex;
+      overflow-x: auto;
+      background: #16161a;
+      border-bottom: 1px solid var(--border);
+      padding: 8px;
+      gap: 8px;
+      scrollbar-width: none;
+    }
+    .file-bar::-webkit-scrollbar { display: none; }
+    .file-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .file-tab.active {
+      border-color: var(--accent);
+      background: rgba(99, 102, 241, 0.15);
+    }
+    .file-tab input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      margin: 0;
+    }
+    .file-tab span { cursor: pointer; }
+
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    .editor-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    textarea {
+      flex: 1;
+      width: 100%;
+      background: var(--bg);
+      color: #e5e7eb;
+      border: none;
+      padding: 14px;
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      tab-size: 2;
+    }
+
+    .mobile-keys {
+      display: flex;
+      overflow-x: auto;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 6px;
+      gap: 6px;
+    }
+    .mobile-keys button {
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 15px;
+      background: var(--bg);
+      min-width: 38px;
+      justify-content: center;
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 65px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--success);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <input type="text" id="zipName" value="my-orion-ext" placeholder="Extension name" />
+  <div style="display:flex; gap:6px;">
+    <button onclick="addNewFile()">+ File</button>
+    <button class="primary" onclick="exportZip()">Export ZIP</button>
+  </div>
+</header>
+
+<div class="file-bar" id="fileBar"></div>
+
+<div class="toolbar">
+  <button onclick="copyCode()">📋 Copy</button>
+  <button onclick="pasteCode()">📥 Paste</button>
+  <button onclick="clearCode()">🧹 Clear</button>
+  <button onclick="renameCurrentFile()">✏️ Rename</button>
+  <button class="danger" onclick="deleteCurrentFile()">🗑️ Delete</button>
+</div>
+
+<div class="editor-wrap">
+  <textarea id="codeEditor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+</div>
+
+<div class="mobile-keys">
+  <button onclick="insertChar('  ')">Tab</button>
+  <button onclick="insertChar('{')">{</button>
+  <button onclick="insertChar('}')">}</button>
+  <button onclick="insertChar('[')">[</button>
+  <button onclick="insertChar(']')">]</button>
+  <button onclick="insertChar('(')">(</button>
+  <button onclick="insertChar(')')">)</button>
+  <button onclick="insertChar('&quot;')">"</button>
+  <button onclick="insertChar('\'')">'</button>
+  <button onclick="insertChar(';')">;</button>
+  <button onclick="insertChar(':')">:</button>
+  <button onclick="insertChar('=')">=</button>
+  <button onclick="insertChar('/')">/</button>
+</div>
+
+<div id="toast">Copied!</div>
+
+<script>
+  const STORAGE_KEY = 'orion_ext_studio_v1';
+
+  const defaultFiles = [
+    {
+      id: 'f1',
+      name: 'manifest.json',
+      selected: true,
+      content: JSON.stringify({
+        manifest_version: 3,
+        name: "My Orion Extension",
+        version: "1.0",
+        description: "Custom extension built on iOS",
+        content_scripts: [
+          {
+            matches: ["<all_urls>"],
+            js: ["content.js"],
+            css: ["styles.css"]
+          }
+        ]
+      }, null, 2)
+    },
+    {
+      id: 'f2',
+      name: 'content.js',
+      selected: true,
+      content: 'console.log("Orion extension loaded!");\n'
+    },
+    {
+      id: 'f3',
+      name: 'styles.css',
+      selected: true,
+      content: '/* Custom styles */\nbody {\n  \n}\n'
+    }
+  ];
+
+  let state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
+    zipName: 'my-orion-ext',
+    activeId: 'f1',
+    files: defaultFiles
+  };
+
+  const fileBar = document.getElementById('fileBar');
+  const editor = document.getElementById('codeEditor');
+  const zipInput = document.getElementById('zipName');
+
+  zipInput.value = state.zipName;
+  zipInput.addEventListener('input', () => {
+    state.zipName = zipInput.value;
+    saveState();
+  });
+
+  editor.addEventListener('input', () => {
+    const file = getActiveFile();
+    if (file) {
+      file.content = editor.value;
+      saveState();
+    }
+  });
+
+  function saveState() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function getActiveFile() {
+    return state.files.find(f => f.id === state.activeId) || state.files[0];
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.opacity = '1';
+    setTimeout(() => t.style.opacity = '0', 1600);
+  }
+
+  function render() {
+    fileBar.innerHTML = '';
+    const active = getActiveFile();
+    if (active) state.activeId = active.id;
+
+    state.files.forEach(file => {
+      const tab = document.createElement('div');
+      tab.className = 'file-tab' + (file.id === state.activeId ? ' active' : '');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = file.selected;
+      cb.onchange = (e) => {
+        file.selected = e.target.checked;
+        saveState();
+      };
+
+      const label = document.createElement('span');
+      label.textContent = file.name;
+      label.onclick = () => {
+        state.activeId = file.id;
+        saveState();
+        render();
+      };
+
+      tab.appendChild(cb);
+      tab.appendChild(label);
+      fileBar.appendChild(tab);
+    });
+
+    editor.value = active ? active.content : '';
+  }
+
+  function addNewFile() {
+    const name = prompt('Enter file name (e.g., popup.html, background.js):');
+    if (!name || !name.trim()) return;
+    const newFile = {
+      id: 'f_' + Date.now(),
+      name: name.trim(),
+      selected: true,
+      content: ''
+    };
+    state.files.push(newFile);
+    state.activeId = newFile.id;
+    saveState();
+    render();
+  }
+
+  function renameCurrentFile() {
+    const file = getActiveFile();
+    if (!file) return;
+    const newName = prompt('Rename file:', file.name);
+    if (newName && newName.trim()) {
+      file.name = newName.trim();
+      saveState();
+      render();
+    }
+  }
+
+  function deleteCurrentFile() {
+    if (state.files.length <= 1) {
+      alert('You must keep at least one file.');
+      return;
+    }
+    const file = getActiveFile();
+    if (confirm(`Delete ${file.name}?`)) {
+      state.files = state.files.filter(f => f.id !== file.id);
+      state.activeId = state.files[0].id;
+      saveState();
+      render();
+    }
+  }
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(editor.value);
+      showToast('Copied to clipboard');
+    } catch {
+      editor.select();
+      document.execCommand('copy');
+      showToast('Copied!');
+    }
+  }
+
+  async function pasteCode() {
+    try {
+      const text = await navigator.clipboard.readText();
+      insertChar(text);
+      showToast('Pasted from clipboard');
+    } catch {
+      alert('iOS blocked automatic paste. Tap inside the editor and select "Paste".');
+    }
+  }
+
+  function clearCode() {
+    if (confirm('Clear all code in this file?')) {
+      editor.value = '';
+      const file = getActiveFile();
+      if (file) file.content = '';
+      saveState();
+    }
+  }
+
+  function insertChar(str) {
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    editor.value = editor.value.substring(0, start) + str + editor.value.substring(end);
+    editor.selectionStart = editor.selectionEnd = start + str.length;
+    editor.focus();
+    const file = getActiveFile();
+    if (file) {
+      file.content = editor.value;
+      saveState();
+    }
+  }
+
+  async function exportZip() {
+    const selectedFiles = state.files.filter(f => f.selected);
+    if (selectedFiles.length === 0) {
+      alert('Check at least one file tab to include in the ZIP.');
+      return;
+    }
+
+    const zip = new JSZip();
+    selectedFiles.forEach(file => {
+      zip.file(file.name, file.content);
+    });
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const filename = (state.zipName.trim() || 'extension') + '.zip';
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Downloaded ${filename}`);
+  }
+
+  render();
+</script>
+</body>
+</html>
