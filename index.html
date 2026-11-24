@@ -42,7 +42,7 @@
       padding: 8px 10px;
       border-radius: 8px;
       font-size: 14px;
-      width: 150px;
+      width: 145px;
     }
     button {
       background: var(--surface);
@@ -273,7 +273,7 @@
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.style.opacity = '1';
-    setTimeout(() => t.style.opacity = '0', 1600);
+    setTimeout(() => t.style.opacity = '0', 1800);
   }
 
   function render() {
@@ -393,29 +393,44 @@
   }
 
   async function exportZip() {
+    if (typeof JSZip === 'undefined') {
+      alert('JSZip library failed to load. Check your internet connection and refresh.');
+      return;
+    }
+
     const selectedFiles = state.files.filter(f => f.selected);
     if (selectedFiles.length === 0) {
       alert('Check at least one file tab to include in the ZIP.');
       return;
     }
 
-    const zip = new JSZip();
-    selectedFiles.forEach(file => {
-      zip.file(file.name, file.content);
-    });
+    try {
+      const zip = new JSZip();
+      selectedFiles.forEach(file => {
+        zip.file(file.name, file.content);
+      });
 
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const filename = (state.zipName.trim() || 'extension') + '.zip';
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const filename = (state.zipName.trim() || 'extension') + '.zip';
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`Downloaded ${filename}`);
+      // Standard browser download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1000);
+
+      showToast(`Exported ${filename}`);
+    } catch (err) {
+      alert('Export error: ' + err.message);
+    }
   }
 
   render();
