@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Orion Extension Studio</title>
-  <script src="https://cloudflare.com"></script>
   <style>
     :root {
       --bg: #121214;
@@ -267,7 +266,7 @@
   }
 
   function getActiveFile() {
-    return state.files.find(f => f.id === state.activeId) || state.files[0];
+    return state.files.find(f => f.id === state.activeId) || state.files;
   }
 
   function showToast(msg) {
@@ -351,7 +350,7 @@
     const file = getActiveFile();
     if (confirm(`Delete ${file.name}?`)) {
       state.files = state.files.filter(f => f.id !== file.id);
-      state.activeId = state.files[0].id;
+      state.activeId = state.files.id;
       saveState();
       render();
     }
@@ -400,12 +399,95 @@
     }
   }
 
-  async function exportZip() {
-    if (typeof JSZip === 'undefined') {
-      alert('JSZip failed to load. Check your connection and refresh the page.');
-      return;
+  // Built-in zero-dependency ZIP archive builder (CRC32 + Store/Deflate)
+  const crcTable = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[i] = c;
+    }
+    return table;
+  })();
+
+  function crc32(bytes) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+      crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[i]) & 0xFF];
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function buildZipBlob(files) {
+    const encoder = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    for (const file of files) {
+      const nameBytes = encoder.encode(file.name);
+      const dataBytes = encoder.encode(file.content);
+      const checksum = crc32(dataBytes);
+
+      // Local File Header (30 bytes + filename)
+      const localHeader = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(localHeader.buffer);
+      lv.setUint32(0, 0x04034b50, true); // Local file header signature
+      lv.setUint16(4, 20, true);         // Version needed
+      lv.setUint16(6, 0x0800, true);     // UTF-8 flag
+      lv.setUint16(8, 0, true);          // Compression method: 0 (store)
+      lv.setUint16(10, 0, true);         // Mod time
+      lv.setUint16(12, 0x0021, true);    // Mod date
+      lv.setUint32(14, checksum, true);  // CRC-32
+      lv.setUint32(18, dataBytes.length, true); // Compressed size
+      lv.setUint32(22, dataBytes.length, true); // Uncompressed size
+      lv.setUint16(26, nameBytes.length, true); // File name length
+      lv.setUint16(28, 0, true);         // Extra field length
+      localHeader.set(nameBytes, 30);
+
+      // Central Directory Header (46 bytes + filename)
+      const centralHeader = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(centralHeader.buffer);
+      cv.setUint32(0, 0x02014b50, true); // Central dir signature
+      cv.setUint16(4, 20, true);         // Version made by
+      cv.setUint16(6, 20, true);         // Version needed
+      cv.setUint16(8, 0x0800, true);     // UTF-8 flag
+      cv.setUint16(10, 0, true);         // Compression method: 0
+      cv.setUint16(12, 0, true);         // Mod time
+      cv.setUint16(14, 0x0021, true);    // Mod date
+      cv.setUint32(16, checksum, true);  // CRC-32
+      cv.setUint32(20, dataBytes.length, true); // Compressed size
+      cv.setUint32(24, dataBytes.length, true); // Uncompressed size
+      cv.setUint16(28, nameBytes.length, true); // File name length
+      cv.setUint16(30, 0, true);         // Extra length
+      cv.setUint16(32, 0, true);         // Comment length
+      cv.setUint16(34, 0, true);         // Disk number
+      cv.setUint16(36, 0, true);         // Internal attrs
+      cv.setUint32(38, 0, true);         // External attrs
+      cv.setUint32(42, offset, true);    // Relative offset
+      centralHeader.set(nameBytes, 46);
+
+      localParts.push(localHeader, dataBytes);
+      centralParts.push(centralHeader);
+      offset += localHeader.length + dataBytes.length;
     }
 
+    const centralSize = centralParts.reduce((acc, p) => acc + p.length, 0);
+    const endRecord = new Uint8Array(22);
+    const ev = new DataView(endRecord.buffer);
+    ev.setUint32(0, 0x06054b50, true); // End of central dir signature
+    ev.setUint16(4, 0, true);
+    ev.setUint16(6, 0, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true);
+    ev.setUint16(20, 0, true);
+
+    return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' });
+  }
+
+  async function exportZip() {
     const selectedFiles = state.files.filter(f => f.selected);
     if (selectedFiles.length === 0) {
       alert('Check at least one file checkbox to include in the ZIP.');
@@ -415,37 +497,25 @@
     const filename = (state.zipName.trim() || 'my-orion-ext') + '.zip';
 
     try {
-      const zip = new JSZip();
-      selectedFiles.forEach(file => {
-        zip.file(file.name, file.content);
-      });
+      const blob = buildZipBlob(selectedFiles);
 
-      // 1. Try iOS Native Share Sheet first (most reliable on iPhone/iPad)
-      const blob = await zip.generateAsync({ type: 'blob' });
-      const zipFile = new File([blob], filename, { type: 'application/zip' });
-
-      if (navigator.canShare && navigator.canShare({ files: [zipFile] })) {
-        await navigator.share({
-          files: [zipFile],
-          title: filename
-        });
-        showToast(`Ready: ${filename}`);
-        return;
-      }
-
-      // 2. Fallback to Base64 Data URL download for desktop/standard browsers
-      const base64 = await zip.generateAsync({ type: 'base64' });
+      // 1. Standard direct download (triggers Orion's download bar)
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = 'data:application/zip;base64,' + base64;
+      a.href = url;
       a.download = filename;
+      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
+
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 1500);
+
       showToast(`Downloaded ${filename}`);
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        alert('Export failed: ' + err.message);
-      }
+      alert('Export failed: ' + err.message);
     }
   }
 
