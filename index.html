@@ -42,7 +42,7 @@
       padding: 8px 10px;
       border-radius: 8px;
       font-size: 14px;
-      width: 145px;
+      width: 140px;
     }
     button {
       background: var(--surface);
@@ -165,7 +165,7 @@
   <input type="text" id="zipName" value="my-orion-ext" placeholder="Extension name" />
   <div style="display:flex; gap:6px;">
     <button onclick="addNewFile()">+ File</button>
-    <button class="primary" onclick="exportZip()">Export ZIP</button>
+    <button class="primary" id="exportBtn" onclick="exportZip()">Export ZIP (3)</button>
   </div>
 </header>
 
@@ -199,7 +199,7 @@
   <button onclick="insertChar('/')">/</button>
 </div>
 
-<div id="toast">Copied!</div>
+<div id="toast">Done!</div>
 
 <script>
   const STORAGE_KEY = 'orion_ext_studio_v1';
@@ -246,6 +246,7 @@
   const fileBar = document.getElementById('fileBar');
   const editor = document.getElementById('codeEditor');
   const zipInput = document.getElementById('zipName');
+  const exportBtn = document.getElementById('exportBtn');
 
   zipInput.value = state.zipName;
   zipInput.addEventListener('input', () => {
@@ -273,7 +274,12 @@
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.style.opacity = '1';
-    setTimeout(() => t.style.opacity = '0', 1800);
+    setTimeout(() => t.style.opacity = '0', 2000);
+  }
+
+  function updateExportCount() {
+    const count = state.files.filter(f => f.selected).length;
+    exportBtn.textContent = `Export ZIP (${count})`;
   }
 
   function render() {
@@ -291,6 +297,7 @@
       cb.onchange = (e) => {
         file.selected = e.target.checked;
         saveState();
+        updateExportCount();
       };
 
       const label = document.createElement('span');
@@ -307,6 +314,7 @@
     });
 
     editor.value = active ? active.content : '';
+    updateExportCount();
   }
 
   function addNewFile() {
@@ -394,15 +402,17 @@
 
   async function exportZip() {
     if (typeof JSZip === 'undefined') {
-      alert('JSZip library failed to load. Check your internet connection and refresh.');
+      alert('JSZip failed to load. Check your connection and refresh the page.');
       return;
     }
 
     const selectedFiles = state.files.filter(f => f.selected);
     if (selectedFiles.length === 0) {
-      alert('Check at least one file tab to include in the ZIP.');
+      alert('Check at least one file checkbox to include in the ZIP.');
       return;
     }
+
+    const filename = (state.zipName.trim() || 'my-orion-ext') + '.zip';
 
     try {
       const zip = new JSZip();
@@ -410,26 +420,32 @@
         zip.file(file.name, file.content);
       });
 
+      // 1. Try iOS Native Share Sheet first (most reliable on iPhone/iPad)
       const blob = await zip.generateAsync({ type: 'blob' });
-      const filename = (state.zipName.trim() || 'extension') + '.zip';
+      const zipFile = new File([blob], filename, { type: 'application/zip' });
 
-      // Standard browser download
-      const url = URL.createObjectURL(blob);
+      if (navigator.canShare && navigator.canShare({ files: [zipFile] })) {
+        await navigator.share({
+          files: [zipFile],
+          title: filename
+        });
+        showToast(`Ready: ${filename}`);
+        return;
+      }
+
+      // 2. Fallback to Base64 Data URL download for desktop/standard browsers
+      const base64 = await zip.generateAsync({ type: 'base64' });
       const a = document.createElement('a');
-      a.href = url;
+      a.href = 'data:application/zip;base64,' + base64;
       a.download = filename;
-      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
-
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 1000);
-
-      showToast(`Exported ${filename}`);
+      document.body.removeChild(a);
+      showToast(`Downloaded ${filename}`);
     } catch (err) {
-      alert('Export error: ' + err.message);
+      if (err.name !== 'AbortError') {
+        alert('Export failed: ' + err.message);
+      }
     }
   }
 
