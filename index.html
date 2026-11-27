@@ -498,16 +498,43 @@
   async function copyCode() {
     const file = getActiveFile();
     if (!file || file.isBinary) return;
+    const fullText = file.content ?? editor.value;
+
     try {
-      await navigator.clipboard.writeText(editor.value);
-      showToast('Copied to clipboard');
-    } catch {
+      await navigator.clipboard.writeText(fullText);
+      showToast(`Copied ${fullText.length.toLocaleString()} chars`);
+      return;
+    } catch (_) {}
+
+    try {
       const wasFocused = document.activeElement === editor;
-      editor.select();
-      document.execCommand('copy');
-      if (!wasFocused) editor.blur();
-      showToast('Copied!');
-    }
+      const temp = document.createElement('textarea');
+      temp.value = fullText;
+      temp.setAttribute('readonly', '');
+      temp.style.position = 'fixed';
+      temp.style.top = '0';
+      temp.style.left = '-9999px';
+      temp.style.opacity = '0';
+      document.body.appendChild(temp);
+
+      temp.focus();
+      temp.select();
+      temp.setSelectionRange(0, fullText.length);
+
+      const ok = document.execCommand('copy');
+      document.body.removeChild(temp);
+
+      if (!wasFocused && document.activeElement) {
+        document.activeElement.blur();
+      }
+
+      if (ok) {
+        showToast(`Copied ${fullText.length.toLocaleString()} chars`);
+        return;
+      }
+    } catch (_) {}
+
+    alert('Copy blocked by browser. Tap inside the code area, choose Select All, and tap Copy.');
   }
 
   async function pasteCode() {
@@ -517,7 +544,7 @@
       const text = await navigator.clipboard.readText();
       if (document.activeElement === editor) editor.blur();
       insertChar(text, false);
-      showToast('Pasted from clipboard');
+      showToast(`Pasted ${text.length.toLocaleString()} chars`);
     } catch {
       alert('iOS blocked automatic paste. Tap inside the editor and select "Paste".');
     }
@@ -645,7 +672,6 @@
     const view = new DataView(buf);
     const decoder = new TextDecoder();
 
-    // Locate End of Central Directory (EOCD)
     let eocdOffset = -1;
     for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
       if (view.getUint32(i, true) === 0x06054b50) {
@@ -671,7 +697,6 @@
       const rawName = decoder.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
       cdOffset += 46 + nameLen + extraLen + commentLen;
 
-      // Skip directories and macOS metadata files
       if (rawName.endsWith('/') || rawName.startsWith('__MACOSX/') || rawName.endsWith('.DS_Store')) {
         continue;
       }
@@ -702,7 +727,6 @@
 
     if (!extracted.length) throw new Error('No usable files found inside the ZIP.');
 
-    // Strip single top-level wrapper folder if all files share one
     const firstSlash = extracted[0].name.indexOf('/');
     if (firstSlash > 0) {
       const prefix = extracted[0].name.slice(0, firstSlash + 1);
