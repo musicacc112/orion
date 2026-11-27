@@ -10,6 +10,7 @@
       --surface: #1e1e24;
       --border: #2e2e38;
       --text: #f4f4f6;
+      --muted: #9ca3af;
       --accent: #6366f1;
       --danger: #ef4444;
       --success: #10b981;
@@ -30,18 +31,20 @@
       padding: 10px 12px;
       border-bottom: 1px solid var(--border);
       display: flex;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
       justify-content: space-between;
     }
-    header input {
+    header input[type="text"] {
       background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text);
       padding: 8px 10px;
       border-radius: 8px;
       font-size: 14px;
-      width: 135px;
+      min-width: 110px;
+      flex: 1;
+      max-width: 160px;
     }
     button {
       background: var(--surface);
@@ -112,6 +115,7 @@
       flex: 1;
       display: flex;
       flex-direction: column;
+      position: relative;
     }
     textarea {
       flex: 1;
@@ -126,6 +130,25 @@
       resize: none;
       outline: none;
       tab-size: 2;
+    }
+    .binary-notice {
+      flex: 1;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      padding: 24px;
+      text-align: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+    .binary-notice img {
+      max-width: 96px;
+      max-height: 96px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin-bottom: 6px;
     }
 
     .mobile-keys {
@@ -170,9 +193,11 @@
 <header>
   <input type="text" id="zipName" value="my-orion-ext" placeholder="Extension name" />
   <div style="display:flex; gap:6px;">
+    <button onclick="triggerImport()">📂 Import</button>
     <button onclick="addNewFile()">+ File</button>
-    <button class="primary" id="exportBtn" onclick="exportZip()">Export ZIP (3)</button>
+    <button class="primary" id="exportBtn" onclick="exportZip()">Export (3)</button>
   </div>
+  <input type="file" id="fileImporter" accept=".zip,.json,.js,.css,.html,.txt,.svg,.png,.jpg,.jpeg,.webp" multiple style="display:none" />
 </header>
 
 <div class="file-bar" id="fileBar"></div>
@@ -189,6 +214,11 @@
 
 <div class="editor-wrap">
   <textarea id="codeEditor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+  <div class="binary-notice" id="binaryNotice">
+    <img id="binaryPreview" alt="" style="display:none" />
+    <strong id="binaryTitle">Binary Asset</strong>
+    <span>This binary file is stored intact and will be included when you export the ZIP.</span>
+  </div>
 </div>
 
 <div class="mobile-keys">
@@ -210,13 +240,14 @@
 <div id="toast">Done!</div>
 
 <script>
-  const STORAGE_KEY = 'orion_ext_studio_v3';
+  const STORAGE_KEY = 'orion_ext_studio_v4';
 
   const defaultFiles = [
     {
       id: 'f1',
       name: 'manifest.json',
       selected: true,
+      isBinary: false,
       content: JSON.stringify({
         manifest_version: 3,
         name: "My Orion Extension",
@@ -235,12 +266,14 @@
       id: 'f2',
       name: 'content.js',
       selected: true,
+      isBinary: false,
       content: 'console.log("Orion extension loaded!");\n'
     },
     {
       id: 'f3',
       name: 'styles.css',
       selected: true,
+      isBinary: false,
       content: '/* Custom styles */\nbody {\n  \n}\n'
     }
   ];
@@ -262,6 +295,7 @@
   }
 
   function pushSnapshot(file, newValue) {
+    if (file.isBinary) return;
     const h = ensureHistory(file);
     if (h.undo[h.undo.length - 1] !== newValue) {
       h.undo.push(newValue);
@@ -273,10 +307,14 @@
 
   const fileBar = document.getElementById('fileBar');
   const editor = document.getElementById('codeEditor');
+  const binaryNotice = document.getElementById('binaryNotice');
+  const binaryPreview = document.getElementById('binaryPreview');
+  const binaryTitle = document.getElementById('binaryTitle');
   const zipInput = document.getElementById('zipName');
   const exportBtn = document.getElementById('exportBtn');
   const undoBtn = document.getElementById('undoBtn');
   const redoBtn = document.getElementById('redoBtn');
+  const fileImporter = document.getElementById('fileImporter');
 
   zipInput.value = state.zipName;
   zipInput.addEventListener('input', () => {
@@ -286,7 +324,7 @@
 
   editor.addEventListener('input', () => {
     const file = getActiveFile();
-    if (!file) return;
+    if (!file || file.isBinary) return;
     file.content = editor.value;
     saveState();
 
@@ -297,7 +335,11 @@
   });
 
   function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      showToast('Storage full - export ZIP to save');
+    }
   }
 
   function getActiveFile() {
@@ -308,17 +350,21 @@
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.style.opacity = '1';
-    setTimeout(() => t.style.opacity = '0', 1800);
+    setTimeout(() => t.style.opacity = '0', 2000);
   }
 
   function updateExportCount() {
     const count = state.files.filter(f => f.selected).length;
-    exportBtn.textContent = `Export ZIP (${count})`;
+    exportBtn.textContent = `Export (${count})`;
   }
 
   function updateHistoryButtons() {
     const file = getActiveFile();
-    if (!file) return;
+    if (!file || file.isBinary) {
+      undoBtn.disabled = true;
+      redoBtn.disabled = true;
+      return;
+    }
     const h = ensureHistory(file);
     undoBtn.disabled = h.undo.length <= 1;
     redoBtn.disabled = h.redo.length === 0;
@@ -326,7 +372,7 @@
 
   function undoCode() {
     const file = getActiveFile();
-    if (!file) return;
+    if (!file || file.isBinary) return;
     const h = ensureHistory(file);
     if (h.undo.length > 1) {
       const current = h.undo.pop();
@@ -341,7 +387,7 @@
 
   function redoCode() {
     const file = getActiveFile();
-    if (!file) return;
+    if (!file || file.isBinary) return;
     const h = ensureHistory(file);
     if (h.redo.length > 0) {
       const next = h.redo.pop();
@@ -387,7 +433,23 @@
       fileBar.appendChild(tab);
     });
 
-    editor.value = active ? active.content : '';
+    if (active && active.isBinary) {
+      editor.style.display = 'none';
+      binaryNotice.style.display = 'flex';
+      binaryTitle.textContent = active.name;
+      if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(active.name)) {
+        const mime = active.name.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
+        binaryPreview.src = `data:${mime};base64,${active.content}`;
+        binaryPreview.style.display = 'block';
+      } else {
+        binaryPreview.style.display = 'none';
+      }
+    } else {
+      binaryNotice.style.display = 'none';
+      editor.style.display = 'block';
+      editor.value = active ? active.content : '';
+    }
+
     updateExportCount();
     updateHistoryButtons();
   }
@@ -399,6 +461,7 @@
       id: 'f_' + Date.now(),
       name: name.trim(),
       selected: true,
+      isBinary: false,
       content: ''
     };
     state.files.push(newFile);
@@ -433,6 +496,8 @@
   }
 
   async function copyCode() {
+    const file = getActiveFile();
+    if (!file || file.isBinary) return;
     try {
       await navigator.clipboard.writeText(editor.value);
       showToast('Copied to clipboard');
@@ -446,9 +511,10 @@
   }
 
   async function pasteCode() {
+    const file = getActiveFile();
+    if (!file || file.isBinary) return;
     try {
       const text = await navigator.clipboard.readText();
-      // Keep focus off the textarea so iOS keyboard stays closed
       if (document.activeElement === editor) editor.blur();
       insertChar(text, false);
       showToast('Pasted from clipboard');
@@ -459,7 +525,7 @@
 
   function clearCode() {
     const file = getActiveFile();
-    if (!file) return;
+    if (!file || file.isBinary) return;
     pushSnapshot(file, editor.value);
     editor.value = '';
     file.content = '';
@@ -470,7 +536,8 @@
 
   function insertChar(str, keepFocus = false) {
     const file = getActiveFile();
-    if (file) pushSnapshot(file, editor.value);
+    if (!file || file.isBinary) return;
+    pushSnapshot(file, editor.value);
 
     const start = editor.selectionStart ?? editor.value.length;
     const end = editor.selectionEnd ?? editor.value.length;
@@ -483,14 +550,197 @@
       editor.blur();
     }
 
-    if (file) {
-      file.content = editor.value;
-      pushSnapshot(file, editor.value);
-      saveState();
-    }
+    file.content = editor.value;
+    pushSnapshot(file, editor.value);
+    saveState();
   }
 
-  // Built-in zero-dependency ZIP archive builder
+  // --- IMPORT ZIP OR FILES ---
+  function triggerImport() {
+    fileImporter.value = '';
+    fileImporter.click();
+  }
+
+  fileImporter.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    try {
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+        await importZipArchive(files[0]);
+      } else {
+        await importLooseFiles(files);
+      }
+    } catch (err) {
+      alert('Import error: ' + err.message);
+    }
+  });
+
+  function isTextFilename(name) {
+    return /\.(json|js|mjs|cjs|ts|css|html|htm|txt|md|svg|xml|yaml|yml)$/i.test(name);
+  }
+
+  function uint8ToBase64(bytes) {
+    let bin = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  function base64ToUint8(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  async function importLooseFiles(fileList) {
+    const decoder = new TextDecoder();
+    for (const f of fileList) {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const isText = isTextFilename(f.name);
+      const content = isText ? decoder.decode(buf) : uint8ToBase64(buf);
+
+      const existing = state.files.find(x => x.name === f.name);
+      if (existing) {
+        existing.content = content;
+        existing.isBinary = !isText;
+        existing.selected = true;
+        historyMap[existing.id] = { undo: [content], redo: [] };
+        state.activeId = existing.id;
+      } else {
+        const newFile = {
+          id: 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          name: f.name,
+          selected: true,
+          isBinary: !isText,
+          content
+        };
+        state.files.push(newFile);
+        state.activeId = newFile.id;
+      }
+    }
+    saveState();
+    render();
+    showToast(`Imported ${fileList.length} file(s)`);
+  }
+
+  async function inflateRaw(compressedBytes) {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('This browser does not support Deflate decompression.');
+    }
+    const ds = new DecompressionStream('deflate-raw');
+    const writer = ds.writable.getWriter();
+    writer.write(compressedBytes);
+    writer.close();
+    const res = await new Response(ds.readable).arrayBuffer();
+    return new Uint8Array(res);
+  }
+
+  async function importZipArchive(zipFile) {
+    const buf = await zipFile.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const view = new DataView(buf);
+    const decoder = new TextDecoder();
+
+    // Locate End of Central Directory (EOCD)
+    let eocdOffset = -1;
+    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+      if (view.getUint32(i, true) === 0x06054b50) {
+        eocdOffset = i;
+        break;
+      }
+    }
+    if (eocdOffset === -1) throw new Error('Invalid or corrupted ZIP file.');
+
+    const totalEntries = view.getUint16(eocdOffset + 10, true);
+    let cdOffset = view.getUint32(eocdOffset + 16, true);
+    const extracted = [];
+
+    for (let i = 0; i < totalEntries; i++) {
+      if (view.getUint32(cdOffset, true) !== 0x02014b50) break;
+      const method = view.getUint16(cdOffset + 10, true);
+      const compSize = view.getUint32(cdOffset + 20, true);
+      const nameLen = view.getUint16(cdOffset + 28, true);
+      const extraLen = view.getUint16(cdOffset + 30, true);
+      const commentLen = view.getUint16(cdOffset + 32, true);
+      const localOffset = view.getUint32(cdOffset + 42, true);
+
+      const rawName = decoder.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
+      cdOffset += 46 + nameLen + extraLen + commentLen;
+
+      // Skip directories and macOS metadata files
+      if (rawName.endsWith('/') || rawName.startsWith('__MACOSX/') || rawName.endsWith('.DS_Store')) {
+        continue;
+      }
+
+      const localNameLen = view.getUint16(localOffset + 26, true);
+      const localExtraLen = view.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const compData = bytes.subarray(dataStart, dataStart + compSize);
+
+      let fileBytes;
+      if (method === 0) {
+        fileBytes = compData;
+      } else if (method === 8) {
+        fileBytes = await inflateRaw(compData);
+      } else {
+        throw new Error(`Unsupported ZIP compression method (${method}) for ${rawName}`);
+      }
+
+      const isText = isTextFilename(rawName);
+      extracted.push({
+        id: 'f_' + Date.now() + '_' + i,
+        name: rawName,
+        selected: true,
+        isBinary: !isText,
+        content: isText ? decoder.decode(fileBytes) : uint8ToBase64(fileBytes)
+      });
+    }
+
+    if (!extracted.length) throw new Error('No usable files found inside the ZIP.');
+
+    // Strip single top-level wrapper folder if all files share one
+    const firstSlash = extracted[0].name.indexOf('/');
+    if (firstSlash > 0) {
+      const prefix = extracted[0].name.slice(0, firstSlash + 1);
+      if (extracted.every(f => f.name.startsWith(prefix))) {
+        extracted.forEach(f => { f.name = f.name.slice(prefix.length); });
+      }
+    }
+
+    const replace = confirm(
+      `Found ${extracted.length} files in ${zipFile.name}.\n\nOK = Replace current project\nCancel = Merge into current project`
+    );
+
+    if (replace) {
+      state.files = extracted;
+      state.zipName = zipFile.name.replace(/\.zip$/i, '');
+      zipInput.value = state.zipName;
+      const manifest = extracted.find(f => f.name.toLowerCase() === 'manifest.json');
+      state.activeId = manifest ? manifest.id : extracted[0].id;
+    } else {
+      for (const item of extracted) {
+        const existing = state.files.find(x => x.name === item.name);
+        if (existing) {
+          existing.content = item.content;
+          existing.isBinary = item.isBinary;
+          existing.selected = true;
+        } else {
+          state.files.push(item);
+        }
+      }
+    }
+
+    Object.keys(historyMap).forEach(k => delete historyMap[k]);
+    saveState();
+    render();
+    showToast(`Loaded ${extracted.length} files from ZIP`);
+  }
+
+  // --- BUILT-IN ZIP EXPORTER ---
   const crcTable = (() => {
     const table = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
@@ -517,7 +767,7 @@
 
     for (const file of files) {
       const nameBytes = encoder.encode(file.name);
-      const dataBytes = encoder.encode(file.content);
+      const dataBytes = file.isBinary ? base64ToUint8(file.content) : encoder.encode(file.content);
       const checksum = crc32(dataBytes);
 
       const localHeader = new Uint8Array(30 + nameBytes.length);
